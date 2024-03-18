@@ -17,7 +17,7 @@
 * `cd LSTMAT`
 * `pip install -r requirements.txt`
 * `wget https://huggingface.co/allasobi110/LSTMAT_AI4L/resolve/main/LSTM_Attention_128HUs_f1.h5?download=true`
-## Folder Sep up:
+## Folder set up:
 *     Root_Folder:
     	|____ LSTMAT
      	|____ mmpose
