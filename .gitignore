@@ -1,0 +1,6 @@
+*.mp4
+*.MOV
+*.h5
+Data_Round1/Data_R1/*/pose/
+Data_Round1/Test_R1/*/pose/
+Data_Round1/
