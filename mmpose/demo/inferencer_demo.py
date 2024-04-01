@@ -82,10 +82,10 @@ def parse_args():
     # and bottom-up models. We assign the default arguments according to the
     # selected pose2d model
     args, _ = parser.parse_known_args()
-    for model in POSE2D_SPECIFIC_ARGS:
-        if model in args.pose2d:
-            filter_args.update(POSE2D_SPECIFIC_ARGS[model])
-            break
+    # for model in POSE2D_SPECIFIC_ARGS:
+    #     if model in args.pose2d:
+    #         filter_args.update(POSE2D_SPECIFIC_ARGS[model])
+    #         break
 
     # call args
     parser.add_argument(

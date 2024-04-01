@@ -1,9 +1,11 @@
+import cv2
 import numpy as np
 import os
 from matplotlib import pyplot as plt
 import time
+# import mediapipe as mp
 import tensorflow as tf
-import json
+import math
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import multilabel_confusion_matrix, accuracy_score, classification_report
@@ -19,6 +21,8 @@ from tensorflow.keras.layers import (LSTM, Dense, Concatenate, Attention, Dropou
                                      Input, Flatten, Activation, Bidirectional, Permute, multiply, 
                                      ConvLSTM2D, MaxPooling3D, TimeDistributed, Conv2D, MaxPooling2D)
 
+from scipy import stats
+
 # disable some of the tf/keras training warnings 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
 tf.get_logger().setLevel("ERROR")
@@ -28,9 +32,88 @@ tf.autograph.set_verbosity(1)
 import absl.logging
 absl.logging.set_verbosity(absl.logging.ERROR)
 
-# Path for exported data, numpy arrays
-DATA_PATH = os.path.join(os. getcwd(),'../Data_Round1/Data_R1') 
-print(DATA_PATH)
+import csv
+import json
+
+def find_max_acc(yhat, res):
+    pivot = yhat[0]
+    m_ = 0
+    for i, y in enumerate(yhat):
+        m = res[i][y]
+        if m > m_:
+            m_ = m
+            pivot = yhat[i]
+    return pivot, m_
+
+def break_point(yhat):
+    max_break = 0
+    current_break = 0
+    pivot = yhat[0]
+    pivot_max = yhat[0]
+    for v in yhat:
+        if v == pivot:
+            current_break += 1
+            if current_break > max_break:
+                max_break = current_break
+                pivot_max = v
+        else:
+            current_break = 0
+            pivot = v
+    return pivot_max, max_break
+
+def most_frequent(yhat, res):
+    count_dict = {}
+    for item in yhat:
+        if item in count_dict:
+            count_dict[item] += 1
+        else:
+            count_dict[item] = 1
+    
+    max_count = max(count_dict.values())
+    most_frequent_items = [key for key, value in count_dict.items() if value == max_count]
+    max_acc = find_max_acc(yhat, res)[0]
+    p = break_point(yhat)[0]
+    for i in most_frequent_items:
+        if i == p:
+            return i
+        
+    for i in most_frequent_items:
+        if max_acc == i:
+            return i
+
+    return most_frequent_items[0]
+
+def read_csv_to_list(file_path):
+    """
+    Đọc file CSV và chuyển đổi nó thành một danh sách.
+
+    Parameters:
+        file_path (str): Đường dẫn tới file CSV cần đọc.
+
+    Returns:
+        list: Danh sách các hàng trong file CSV. Mỗi hàng là một danh sách con chứa các giá trị tương ứng.
+    """
+    data_list = []
+    with open(file_path, 'r', newline='') as file:
+        csv_reader = csv.reader(file)
+        for row in csv_reader:
+            data_list.append(row)
+    return data_list
+
+# Sử dụng hàm để đọc file CSV và lưu vào biến
+csv_file_path = '../Data_Round1/input.csv'
+csv_data = read_csv_to_list(csv_file_path)
+
+input_list = []
+mp4_list = []
+# In ra kết quả
+for row in csv_data[1:]:
+    mp4_list.append(row[0])
+    a = row[0].split('/')[:-1]
+    b = row[0].split('/')[-1].split(".")[0]
+    a.append("pose")
+    a.append(f"results_{b}.json")
+    input_list.append('/'.join(a))
 
 # Actions/exercises that we try to detect
 actions = np.array(['chest fly machine', 'deadlift', 'hammer curl',
@@ -48,12 +131,12 @@ sequence_length = 60
 
 data_poses = {}
 min_d = 1000
-for action in actions:
+for action in ["PIXELSPACE"]:
     data_poses[action] = {}
-    for filename in os.listdir(DATA_PATH+"/"+action+"/pose"):
+    for kk, filename in enumerate(input_list):
         if filename.endswith('.json'):
-            file_path = os.path.join(DATA_PATH+"/"+action+"/pose", filename)
-            key_file = filename.replace('.json', '').replace('results_', '')
+            file_path = filename
+            key_file = mp4_list[kk]
             # Open the JSON file and load its contents
             with open(file_path, 'r') as json_file:
                 data = json.load(json_file)
@@ -65,29 +148,11 @@ for action in actions:
 
 label_map = {label:num for num, label in enumerate(actions)}
 
-# Load and organize recorded training data
-sequences, labels = [], []
-for action in actions:
-    for sequence in list(data_poses[action].keys()):
-        mod_d = len(data_poses[action][sequence])//sequence_length
-        for m in range(mod_d):
-            window = []
-            for frame_num in range(m*sequence_length, (m+1)*sequence_length):         
-                # LSTM input data
-                res = np.asarray(data_poses[action][sequence][frame_num]).flatten()
-                window.append(res)  
-                
-            sequences.append(window)
-            labels.append(label_map[action])
-
-X = np.array(sequences)
-y = to_categorical(labels).astype(int)
-
 # Callbacks to be used during neural network training 
 es_callback = EarlyStopping(monitor='val_loss', min_delta=5e-4, patience=10, verbose=0, mode='min')
 lr_callback = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.00001, verbose=0, mode='min')
-chkpt_callback = ModelCheckpoint(filepath=DATA_PATH, monitor='val_loss', verbose=0, save_best_only=True, 
-                                 save_weights_only=False, mode='min', save_freq=1)
+# # chkpt_callback = ModelCheckpoint(filepath=DATA_PATH, monitor='val_loss', verbose=0, save_best_only=True, 
+#                                  save_weights_only=False, mode='min', save_freq=1)
 
 # Optimizer
 # opt = tf.keras.optimizers.Adam(learning_rate=0.01)
@@ -102,7 +167,7 @@ NAME = f"ExerciseRecognition-AttnLSTM-{int(time.time())}"
 log_dir = os.path.join(os.getcwd(), 'logs', NAME,'')
 tb_callback = TensorBoard(log_dir=log_dir)
 
-callbacks = [tb_callback, es_callback, lr_callback, chkpt_callback]
+# callbacks = [tb_callback, es_callback, lr_callback, chkpt_callback]
 
 def attention_block(inputs, time_steps):
     """
@@ -144,8 +209,11 @@ x = Dense(actions.shape[0], activation='softmax')(x)
 AttnLSTM = Model(inputs=[inputs], outputs=x)
 
 AttnLSTM.compile(optimizer=opt, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+# AttnLSTM.fit(X_train, y_train, batch_size=batch_size, epochs=max_epochs, validation_data=(X_val, y_val), callbacks=callbacks)
 
+# Model map
 models = {
+    # 'LSTM': lstm, 
     'LSTM_Attention_128HUs': AttnLSTM, 
 }
 
@@ -154,90 +222,48 @@ for model_name, model in models.items():
     load_dir = os.path.join(os.getcwd(), f"{model_name}_f1.h5")
     model.load_weights(load_dir)
 
-for model in models.values():
-    res = model.predict(X, verbose=0)
+sequences, labels = [], []
 
-eval_results = {}
-eval_results['confusion matrix'] = None
-eval_results['accuracy'] = None
-eval_results['precision'] = None
-eval_results['recall'] = None
-eval_results['f1 score'] = None
+new_sequences = {}
+new_labels = {}
+for action in ["PIXELSPACE"]:
+    new_sequences[action] = {}
+    new_labels[action] = {}
+    for sequence in list(data_poses[action].keys()):
+        new_sequences[action][sequence] = []
+        new_labels[action][sequence] = []
+        mod_d = len(data_poses[action][sequence])//sequence_length
+        for m in range(mod_d):
+            window = []
+            for frame_num in range(m*sequence_length, (m+1)*sequence_length):         
+                # LSTM input data
+                res = np.asarray(data_poses[action][sequence][frame_num]).flatten()
+                window.append(res)  
+                
+            sequences.append(window)
+            new_sequences[action][sequence].append(window)
 
-confusion_matrices = {}
-classification_accuracies = {}   
-precisions = {}
-recalls = {}
-f1_scores = {} 
+results_final = []
+for action in ["PIXELSPACE"]:
+    for video in list(new_sequences[action].keys()):
+        X = np.array(new_sequences[action][video])
 
-for model_name, model in models.items():
-    yhat = model.predict(X, verbose=0)
-    # Get list of classification predictions
-    ytrue = np.argmax(y, axis=1).tolist()
-    yhat = np.argmax(yhat, axis=1).tolist()
+        for model_name, model in models.items():
+            yhat_ = model.predict(X, verbose=0)
+            yhat = np.argmax(yhat_, axis=1).tolist()
+            results_final.append(actions[most_frequent(yhat, yhat_)])
+
+output_csv = '../Data_Round1/output.csv'
+
+# Mở tệp CSV để ghi
+with open(output_csv, 'w', newline='') as file:
+    writer = csv.writer(file)
     
-    # Confusion matrix
-    confusion_matrices[model_name] = multilabel_confusion_matrix(ytrue, yhat)
-    # print(f"{model_name} confusion matrix: {os.linesep}{confusion_matrices[model_name]}")
-
-# Collect results 
-eval_results['confusion matrix'] = confusion_matrices
-
-corr_matrix_k = np.zeros((len(actions), len(actions)))
-corr_matrix = np.zeros((len(actions), len(actions)))
-for t in range(len(yhat)):
-    corr_matrix_k[ytrue[t]][yhat[t]] += 1
-for t in range(len(actions)):
-    for k in range(len(actions)):
-        corr_matrix[t][k] = corr_matrix_k[t][k]/np.sum(corr_matrix_k[t])
-
-import seaborn as sns
-import matplotlib.pyplot as plt
-
-for model_name, model in models.items():
-    yhat = model.predict(X, verbose=0)
+    # Ghi tiêu đề cho các cột
+    writer.writerow(['video', 'Dự đoán'])
     
-    # Get list of classification predictions
-    ytrue = np.argmax(y, axis=1).tolist()
-    yhat = np.argmax(yhat, axis=1).tolist()
-    
-    # Model accuracy
-    classification_accuracies[model_name] = accuracy_score(ytrue, yhat)    
-    print(f"{model_name} classification accuracy = {round(classification_accuracies[model_name]*100,3)}%")
+    # Ghi dữ liệu từ hai danh sách vào tệp CSV
+    for item1, item2 in zip(mp4_list, results_final):
+        writer.writerow([item1, item2])
 
-# Collect results 
-eval_results['accuracy'] = classification_accuracies
-
-for model_name, model in models.items():
-    yhat = model.predict(X, verbose=0)
-    
-    # Get list of classification predictions
-    ytrue = np.argmax(y, axis=1).tolist()
-    yhat = np.argmax(yhat, axis=1).tolist()
-    
-    # Precision, recall, and f1 score
-    report = classification_report(ytrue, yhat, target_names=actions, output_dict=True)
-    
-    precisions[model_name] = report['weighted avg']['precision']
-    recalls[model_name] = report['weighted avg']['recall']
-    f1_scores[model_name] = report['weighted avg']['f1-score'] 
-   
-    print(f"{model_name} weighted average precision = {round(precisions[model_name],3)}")
-    print(f"{model_name} weighted average recall = {round(recalls[model_name],3)}")
-    print(f"{model_name} weighted average f1-score = {round(f1_scores[model_name],3)}\n")
-
-# Collect results 
-eval_results['precision'] = precisions
-eval_results['recall'] = recalls
-eval_results['f1 score'] = f1_scores
-
-plt.figure(figsize=(15, 12))
-ax = sns.heatmap(corr_matrix, annot=True, fmt=".2f",
-            xticklabels=actions, yticklabels=actions)
-ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
-plt.xticks(rotation=90)
-plt.xlabel('Prediction')
-plt.ylabel('Ground Truth')
-plt.title('PIXEL SPACE Correlation graph')
-plt.text(0.5, -0.1, f"Final F1 Score: {f1_scores['LSTM_Attention_128HUs']*100:.3f}", horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
-plt.savefig(f'PIXCEL_SPACE_CORR_F1_RESULT-{int(time.time())}.png')
+print("Dữ liệu đã được ghi vào tệp: ", output_csv)

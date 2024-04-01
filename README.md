@@ -1,5 +1,5 @@
 # AI4LIFE 2024
-# REDHAT ANGELS TEAM
+# PIXEL SPACE TEAM
 ## Contributors: T.Van Hong Son, L.Viet Hung
 ## Environment set up:
 * `conda create --name openmmlab python=3.8 -y`

@@ -1,9 +1,11 @@
 #!/bin/bash
 
-find Data_Round1/Test_R1 -type f -exec readlink -f {} \; > Data_Round1/file_name_test.txt
+tail -n +2 Data_Round1/input.csv | awk -F',' '{print $1}' > Data_Round1/input.txt
 
 chmod u+x get_pose.sh
 
-bash get_pose.sh Data_Round1/file_name_test.txt
+bash get_pose.sh Data_Round1/input.txt
 
-python LSTMAT/inference.py
+cd LSTMAT
+
+python inference.py
